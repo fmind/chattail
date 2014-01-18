@@ -1,0 +1,7 @@
+[Credentials]
+jid = <bot-jid>
+password = <bot-password>
+
+[Contacts]
+jid1 = <admin1-jid>
+jid2 = <admin2-jid>
