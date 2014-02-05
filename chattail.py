@@ -30,6 +30,7 @@ __license__ = 'GPLv3'
 import ConfigParser
 import sleekxmpp
 import argparse
+import threading
 import logging
 import sys
 import os
@@ -47,6 +48,7 @@ if sys.version_info < (3, 0):
 class ChattailException(Exception):
     """Exception class: for all exceptions specific to chattail"""
     pass
+
 
 class Chattail(sleekxmpp.ClientXMPP):
     """Main class: Log handler + XMPP Client"""
@@ -70,11 +72,19 @@ class Chattail(sleekxmpp.ClientXMPP):
         self.config = ConfigParser.ConfigParser()
         self.config.read(config_file)
 
-        self.logger.info('Initializing: XMPP client ...')
         # init client
+        self.logger.info('Initializing: XMPP client ...')
         jid = self.config.get('Credentials', 'jid')
         password = self.config.get('Credentials', 'password')
         sleekxmpp.ClientXMPP.__init__(self, jid, password)
+        self.threads = []
+
+        # init functions
+        self.logger.info('Initializing: additional functions ...')
+        self.echo = self.config.getint('Functions', 'echo')
+        if self.echo:
+            self.logger.info('Function: echo activated')
+
 
         # init plugins
         self.logger.info('Initializing: XMPP plugins ...')
@@ -86,6 +96,7 @@ class Chattail(sleekxmpp.ClientXMPP):
         self.add_event_handler("message", self.__message_handler)
         self.add_event_handler("presence_available", self.__presence_handler)
         self.add_event_handler("presence_unavailable", self.__presence_handler)
+        self.add_event_handler("disconnected", self.__disconnect_handler)
 
     def run(self):
         """Main process: handle bot commands"""
@@ -110,13 +121,25 @@ class Chattail(sleekxmpp.ClientXMPP):
     def dispatch(self, from_jid, action, args):
         """Send an action to the right method"""
         if action == 'tail':
-            self.__tail(from_jid, args)
+            self.__spawn_thread(self.__tail, from_jid, args)
 
     def __tail(self, jid, args):
         from time import sleep
+
+        if not hasattr(self, 'i'):
+            self.i = 0
+        self.i += 1
+
+        j = self.i
         while True:
-            self.send_message(mto=jid, mbody="Coucou")
+            self.send_message(mto=jid, mbody="Coucou %d" % j)
             sleep(1)
+
+    def __spawn_thread(self, fct, *args):
+        """Spawn a thread for an async function"""
+        t = threading.Thread(target=self.__tail, name=fct.__name__, args=args)
+        t.start()
+        self.threads.append(t)
 
     def __start_handler(self, event):
         """
@@ -127,10 +150,12 @@ class Chattail(sleekxmpp.ClientXMPP):
                      event does not provide any additional
                      data.
         """
+        self.logger.info('Initializing: roster ...')
         self.send_presence()
         self.get_roster()
 
         # init contact list
+        self.logger.info('Initializing: contact list ...')
         self.contacts = [v for k,v in self.config.items('Contacts')]
         self.onlines = []
 
@@ -145,9 +170,13 @@ class Chattail(sleekxmpp.ClientXMPP):
         if not msg['type'] in ('chat', 'normal') and not self.is_my_contact(msg['from'].bare, and_online=True):
             return
 
+        # main dispatch
         action, args = self.parse_command(msg['body'])
         self.dispatch(from_jid, action, args)
-        msg.reply("Thanks for sending\n%(body)s" % msg).send()
+
+        # function echo
+        if self.echo:
+            self.send_message(mto=from_jid, mbody=("ECHO: %(body)s" % msg))
 
     def __presence_handler(self, presence):
         """
@@ -162,12 +191,21 @@ class Chattail(sleekxmpp.ClientXMPP):
         if not self.is_my_contact(from_jid):
             return
 
+        # switch between online/offline
         if not 'type' in presence.keys() or presence['type'] == 'available':
             self.onlines.append(from_jid)
             logging.info('Now online: %s', from_jid)
         elif presence['type'] == 'unavailable':
             self.onlines.remove(from_jid)
             logging.info('Now offline %s', from_jid)
+
+    def __disconnect_handler(self, nothing):
+        """
+        Quit the program after the connection is closed
+        os._exit is a little abrupt, you must clean all the IO
+        """
+        print "Good Bye :)"
+        os._exit(1)
 
     def is_my_contact(self, jid, and_online=False):
         """Check if a JID is in my contact/online list"""
@@ -182,7 +220,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Tail your Syslog over XMPP")
     parser.add_argument('-c', '--config', default='prod.conf', help="Path to your configuration file (format: .ini)")
     parser.add_argument('-d', '--debug', help='set logging to DEBUG', action='store_const', dest='loglevel', const=logging.DEBUG)
-    parser.add_argument('-verbose', '--verbose', help='set logging to VERBOSE', action='store_const', dest='loglevel', const=logging.INFO)
+    parser.add_argument('-v', '--verbose', help='set logging to VERBOSE', action='store_const', dest='loglevel', const=logging.INFO)
     args = parser.parse_args(sys.argv[1:])
 
     # Setup logging
