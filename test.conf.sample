@@ -1,7 +1,11 @@
 [Credentials]
-jid = <bot-jid>
-password = <bot-password>
+jid = bot-jid@domain.your
+password = 12345678
 
 [Contacts]
-jid1 = <admin1-jid>
-jid2 = <admin2-jid>
+jid1 = chat-jid@domain.your
+jid2 = friend-jid@domain.your
+
+[Files]
+messages=/var/log/messages
+apache=/var/log/apache/access.log
